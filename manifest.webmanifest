@@ -1,0 +1,9 @@
+{
+  "name": "성어 뜻 맞히기 ver2",
+  "short_name": "성어 ver2",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#F4F1E9",
+  "theme_color": "#7A2E2E",
+  "icons": [{ "src": "icon-180.png", "sizes": "180x180", "type": "image/png" }]
+}
