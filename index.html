@@ -301,7 +301,9 @@ function levelup() {
 /* ============ 성어 뜻 맞히기 ver2 ============ */
 const app = document.getElementById('app');
 const KEY = 'seongeo2-v2';
-const PVAR = { 1: '--p1', 2: '--p2', 3: '--p3', 4: '--p4' };
+const PVAR = { 1: '--p1', 2: '--p2', 3: '--p3', 4: '--p4', W: '--bad' };
+const DRILL = 'W';  // 틀린 것 외우기 모드
+const CLEAR = 3;    // 연속 3번 맞혀야 빠진다
 const pcolor = p => `var(${PVAR[p]})`;
 
 const byPart = {};
@@ -317,8 +319,8 @@ function load() {
   }
   for (const d of D) {
     const r = store.rec[d.i];
-    if (!r) store.rec[d.i] = { m: 0, a: 0, w: 0 };
-    else { if (r.m == null) r.m = 0; if (r.a == null) r.a = 0; if (r.w == null) r.w = 0; }
+    if (!r) store.rec[d.i] = { m: 0, a: 0, w: 0, s: 0 };
+    else { if (r.m == null) r.m = 0; if (r.a == null) r.a = 0; if (r.w == null) r.w = 0; if (r.s == null) r.s = 0; }
   }
   SOUND = store.sound !== 0;
 }
@@ -340,6 +342,12 @@ function pctOf(pool) {
 // 파트별 오답 노트: 그 파트에서 틀린 적이 있고 아직 못 외운 것
 const wrongOf = p => byPart[p].filter(d => store.rec[d.i].w > 0 && !mastered(d));
 const allWrong = () => D.filter(d => store.rec[d.i].w > 0 && !mastered(d));
+// 틀린 것 외우기: 한 번이라도 틀린 성어 중 아직 연속 3번 못 맞힌 것
+const everWrong = () => D.filter(d => store.rec[d.i].w > 0);
+const drillPool = () => everWrong().filter(d => store.rec[d.i].s < CLEAR);
+// 많이 틀린 것 → 연속 정답이 적은 것 순
+const drillOrder = pool => pool.map(d => ({ d, k: -store.rec[d.i].w * 10 + store.rec[d.i].s * 5 + Math.random() * 6 }))
+  .sort((a, b) => a.k - b.k).map(x => x.d);
 
 /* ---------- 문제 만들기 ---------- */
 // 성어를 보여 주고 뜻을 고르게 한다 (어제 게임과 같은 방식)
@@ -388,12 +396,34 @@ function screenHome() {
         </div>
         <div class="rail"><i style="width:${Math.max(p, 1)}%"></i></div>
       </div>
+      <div id="drillbox"></div>
       <div class="kicker">어느 파트부터</div>
       <div id="parts"></div>
       <div class="note">파트마다 오답 노트가 따로 있어요.
       한 파트를 풀고 나면 그 파트의 «오답만 다시 풀기»가 열립니다.</div>
     </div>`));
 
+  const ew = everWrong().length, dl = drillPool().length;
+  if (ew) {
+    const dc = $(`
+      <button class="partcard" style="--pc:var(--bad);margin-bottom:18px">
+        <span class="bar"></span>
+        <div class="hd">
+          <span class="pn">🎯 틀린 것만 외우기</span>
+          <span class="cnt">${dl}개 남음</span>
+        </div>
+        <div class="tags">
+          <span class="tag warn">한 번이라도 틀린 ${ew}개</span>
+          <span class="tag">연속 ${CLEAR}번 맞히면 빠져요</span>
+        </div>
+        <div class="ft">
+          <div class="rail"><i style="width:${Math.max(Math.round((ew - dl) / ew * 100), 1)}%"></i></div>
+          <span class="pct">${Math.round((ew - dl) / ew * 100)}%</span>
+        </div>
+      </button>`);
+    dc.onclick = screenDrill;
+    document.getElementById('drillbox').append(dc);
+  }
   const box = document.getElementById('parts');
   PARTS.forEach(pt => {
     const list = byPart[pt.id];
@@ -472,6 +502,61 @@ function screenPart(pid) {
   document.getElementById('plist').onclick = () => screenList(pid);
 }
 
+/* ---------- 틀린 것 외우기 ---------- */
+function screenDrill() {
+  const pool = drillPool(), ew = everWrong();
+  const groups = {};
+  ew.forEach(d => { const k = `${d.pg}쪽 · ${d.b}`; (groups[k] = groups[k] || { k, left: 0, w: 0, items: [] }); });
+  // 묶음은 틀린 것만이 아니라 묶음 전체를 푼다 — 비슷한 뜻끼리 가려내는 연습
+  D.forEach(d => { const g = groups[`${d.pg}쪽 · ${d.b}`]; if (g) g.items.push(d); });
+  pool.forEach(d => groups[`${d.pg}쪽 · ${d.b}`].left++);
+  ew.forEach(d => groups[`${d.pg}쪽 · ${d.b}`].w += store.rec[d.i].w);
+  const glist = Object.values(groups).filter(g => g.left).sort((a, b) => b.w - a.w);
+
+  app.innerHTML = '';
+  app.append($(`
+    <div style="--pc:var(--bad)">
+      <div class="listhead">
+        <button class="iconbtn" id="back" aria-label="뒤로">←</button>
+        <div style="flex:1">
+          <h2>틀린 것만 외우기</h2>
+          <div class="sub">한 번이라도 틀린 ${ew.length}개 · ${ew.length - pool.length}개 졸업</div>
+        </div>
+      </div>
+      <div class="overall" style="margin-bottom:18px">
+        <div><div class="num" style="color:var(--pc)">${pool.length}개</div>
+        <div class="sub">남았어요 · 연속 ${CLEAR}번 맞히면 졸업</div></div>
+        <div class="rail"><i style="width:${Math.max(Math.round((ew.length - pool.length) / Math.max(ew.length, 1) * 100), 1)}%;background:var(--pc)"></i></div>
+      </div>
+      <div class="kicker">무엇을 풀까</div>
+      <div id="modes"></div>
+      <div class="kicker" style="margin-top:18px">많이 틀린 묶음 — 묶음째 풀기</div>
+      <div id="groups"></div>
+      <div class="note">묶음째 풀기는 그 묶음의 성어를 전부 냅니다. 뜻이 비슷한 것끼리 가려내는 연습이에요.
+      틀리면 그 성어가 이번 판 뒤쪽에 한 번 더 나옵니다.</div>
+    </div>`));
+  const box = document.getElementById('modes');
+  const mk = (host, icon, title, sub, on, dis) => {
+    const el = $(`<button class="modecard" ${dis ? 'disabled' : ''}>
+      <span class="ic">${icon}</span>
+      <span style="flex:1"><span class="t" style="display:block">${esc(title)}</span>
+      <span class="d" style="display:block">${esc(sub)}</span></span>
+      <span class="go">›</span></button>`);
+    if (!dis) el.onclick = on;
+    host.append(el);
+  };
+  mk(box, '▶', '많이 틀린 것부터', pool.length ? `12개씩 · 남은 ${pool.length}개 중` : '다 졸업했어요!',
+    () => startRound(shuffle(drillOrder(pool).slice(0, 12)), DRILL), !pool.length);
+  mk(box, '🏁', '남은 것 전부', `${pool.length}개를 한 번에`, () => startRound(shuffle(pool.slice()), DRILL), !pool.length);
+  const gb = document.getElementById('groups');
+  glist.slice(0, 12).forEach(g => mk(gb, '📚', g.k, `남은 ${g.left}개 · 묶음 전체 ${g.items.length}개 · ${g.items.map(d => d.ko).slice(0, 4).join('·')}${g.items.length > 4 ? '…' : ''}`,
+    () => startRound(shuffle(g.items.slice()), DRILL)));
+  if (!glist.length) gb.append($('<div class="empty">남은 묶음이 없어요.</div>'));
+  document.getElementById('back').onclick = screenHome;
+}
+const backOf = pid => pid === DRILL ? screenDrill() : screenPart(pid);
+const nameOf = pid => pid === DRILL ? '틀린 것 외우기' : `파트 ${pid}`;
+
 /* ---------- 풀이 ---------- */
 let R = null;
 function startRound(list, pid) {
@@ -489,7 +574,7 @@ function renderQ() {
     <div style="--pc:${pcolor(R.pid)}">
       <div class="top">
         <button class="iconbtn" id="quit" aria-label="그만두기">✕</button>
-        <div class="brand" style="font-size:16px">파트 ${R.pid}</div>
+        <div class="brand" style="font-size:16px">${nameOf(R.pid)}</div>
         <span class="streak" id="streak"></span>
       </div>
       <div class="hud">
@@ -517,7 +602,7 @@ function renderQ() {
   });
   document.getElementById('quit').onclick = () => {
     const back = R.pid;
-    if (confirm('그만둘까요? 지금까지 푼 건 저장돼요.')) { R = null; screenPart(back); }
+    if (confirm('그만둘까요? 지금까지 푼 건 저장돼요.')) { R = null; backOf(back); }
   };
   showStreak();
 }
@@ -540,8 +625,12 @@ function answer(val, btn) {
   const q = R.q, d = q.d, r = store.rec[d.i];
   const ok = val === q.a;
   r.a++;
-  if (ok) { r.m = Math.min(3, r.m + 1); R.right++; R.streak++; R.best = Math.max(R.best, R.streak); }
-  else { r.m = Math.max(0, r.m - 1); r.w++; R.wrong++; R.streak = 0; R.missed.push(d); }
+  if (ok) { r.m = Math.min(3, r.m + 1); r.s++; R.right++; R.streak++; R.best = Math.max(R.best, R.streak); }
+  else {
+    r.m = Math.max(0, r.m - 1); r.s = 0; r.w++; R.wrong++; R.streak = 0; R.missed.push(d);
+    // 틀린 것 외우기에선 틀린 성어를 이번 판 뒤쪽에 한 번 더
+    if (R.pid === DRILL && R.list.length < 40 && R.list.indexOf(d, R.idx + 1) < 0) R.list.push(d);
+  }
   save();
   ok ? dingdong() : ttaeng();
   showStreak();
@@ -583,7 +672,7 @@ function roundEnd() {
   save();
   acc >= 80 ? fanfare() : levelup();
   const head = acc === 100 ? '전부 맞혔어요!' : acc >= 80 ? '잘했어요' : acc >= 60 ? '거의 됐어요' : '한 번 더 볼까요';
-  const wn = wrongOf(pid).length;
+  const wn = pid === DRILL ? drillPool().length : wrongOf(pid).length;
 
   app.innerHTML = '';
   app.append($(`
@@ -597,12 +686,12 @@ function roundEnd() {
       <div class="statgrid">
         <div class="stat"><div class="v">${acc}%</div><div class="l">정확도</div></div>
         <div class="stat"><div class="v">${g.best}</div><div class="l">최고 연속</div></div>
-        <div class="stat"><div class="v">${pctOf(byPart[pid])}%</div><div class="l">파트 ${pid} 진도</div></div>
+        ${pid === DRILL ? `<div class="stat"><div class="v">${wn}</div><div class="l">남은 틀린 것</div></div>` : `<div class="stat"><div class="v">${pctOf(byPart[pid])}%</div><div class="l">파트 ${pid} 진도</div></div>`}
       </div>
       <div id="missed"></div>
       <div class="btnrow" style="margin-top:18px">
-        <button class="btn ghost" id="again" ${wn ? '' : 'disabled'}>오답만 다시</button>
-        <button class="btn" id="toPart">파트 ${pid}로</button>
+        <button class="btn ghost" id="again" ${wn ? '' : 'disabled'}>${pid === DRILL ? '12개 더' : '오답만 다시'}</button>
+        <button class="btn" id="toPart">${nameOf(pid)}로</button>
       </div>
       <button class="btn ghost" id="home" style="margin-top:9px">처음으로</button>
     </div>`));
@@ -622,8 +711,10 @@ function roundEnd() {
     });
     box.append(list);
   }
-  document.getElementById('again').onclick = () => startRound(shuffle(wrongOf(pid)).slice(0, 15), pid);
-  document.getElementById('toPart').onclick = () => { R = null; screenPart(pid); };
+  document.getElementById('again').onclick = () => pid === DRILL
+    ? startRound(shuffle(drillOrder(drillPool()).slice(0, 12)), DRILL)
+    : startRound(shuffle(wrongOf(pid)).slice(0, 15), pid);
+  document.getElementById('toPart').onclick = () => { R = null; backOf(pid); };
   document.getElementById('home').onclick = () => { R = null; screenHome(); };
   R = null;
 }
@@ -817,6 +908,14 @@ function reportText() {
     .forEach(r => L.push(`  파트 ${r.p.id} ${r.p.name} — 정답률 ${r.rate}% (${r.wrong}/${r.tries} 틀림) · 진도 ${pctOf(byPart[r.p.id])}%`));
   const wg = groupRows(d => `${d.pg}쪽 · ${d.b}`, 2).slice(0, 5);
   if (wg.length) { L.push(''); L.push('■ 약한 묶음'); wg.forEach(r => L.push(`  ${r.k} — ${r.rate}%`)); }
+  const ew = everWrong().sort((a, b) => store.rec[b.i].w - store.rec[a.i].w);
+  if (ew.length) {
+    L.push('');
+    L.push(`■ 틀린 것 외우기 — 한 번이라도 틀린 ${ew.length}개 중 ${ew.length - drillPool().length}개 졸업, ${drillPool().length}개 남음`);
+    L.push('■ 많이 틀린 성어 (틀린 횟수 · 지금 연속 정답)');
+    ew.slice(0, 40).forEach((d, n) => L.push(`  ${n + 1}) ${d.ko}(${d.hj}) ✕${store.rec[d.i].w} · 연속 ${store.rec[d.i].s} — ${d.pg}쪽 · ${d.b}`));
+    if (ew.length > 40) L.push(`  … 외 ${ew.length - 40}개`);
+  }
   const miss = allWrong().sort((a, b) => store.rec[b.i].w - store.rec[a.i].w);
   L.push('');
   L.push(`■ 아직 못 외운 성어 ${miss.length}개`);
